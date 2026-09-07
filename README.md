@@ -1,52 +1,78 @@
-# TikTok Live Stream Key Generator for OBS Studio Using Streamlabs API
+# TikTok Live Dock — OBS 32+ Plugin (fork)
 
-## Description
-This application is a simple tool that generates a TikTok Live Stream Key for OBS Studio using the Streamlabs API. Streamlabs TikTok LIVE access is required.
+This fork turns the original standalone Streamlabs/TikTok stream-key generator
+into a **native OBS Studio (32+) plugin**: a single dock panel inside OBS that
+auto-generates your TikTok LIVE stream key, sets the title, picks the
+game/category, and starts/stops the actual OBS stream — no more copy-pasting
+a key into Settings > Stream.
 
-[!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://buymeacoffee.com/loukious)
+## What changed vs. the original standalone app
 
+The original app (`Stream.py`, `TokenRetriever.py`,
+`StreamLabsTikTokStreamKeyGenerator.py`, `Updater.py`) is a separate PySide6
+GUI you had to run alongside OBS and then manually paste the generated
+server/key into OBS. Those files are kept at the repo root for reference.
 
-## Features
-- Generate TikTok Live Stream Key using Streamlabs API
+The new native plugin (`src/`, `data/`) lives *inside* OBS as a dock:
+
+| Capability | Original app | This plugin |
+|---|---|---|
+| Generate stream key | Yes, via Streamlabs API | Yes, same Streamlabs API |
+| Set title | Yes, in-app field | Yes, in-dock field |
+| Pick game/category | Yes, autocomplete search | Yes, autocomplete combo box |
+| Apply to OBS | Manual copy/paste | Automatic — writes the OBS streaming service directly |
+| Start/stop stream | External to OBS | `Go Live` / `End Live` call OBS's own start/stop APIs |
+| Distribution | Standalone executable | Installable via OBS 32's Plugin Manager |
+
+## How it works
+
+`src/StreamClient.{h,cpp}` is a direct C++ port of `Stream.py`, calling the
+same licensed Streamlabs endpoints:
+
+- `GET  /api/v5/slobs/tiktok/info?category=<query>` — category/game search
+- `POST /api/v5/slobs/tiktok/stream/start` — creates the TikTok LIVE room, returns `rtmp` + `key`
+- `POST /api/v5/slobs/tiktok/stream/{id}/end` — ends the room
+- `GET  /api/v5/slobs/tiktok/info` — account/eligibility info
+
+`src/TikTokDock.{h,cpp}` is the Qt dock UI registered via
+`obs_frontend_add_dock_by_id`. On "Go Live" it calls `StreamClient::startStream`,
+then feeds the returned server/key straight into
+`obs_service_create("rtmp_custom", ...)` + `obs_frontend_set_streaming_service`
++ `obs_frontend_streaming_start()`. It also listens for
+`OBS_FRONTEND_EVENT_STREAMING_STOPPED` so the TikTok room is closed even if
+you stop streaming from OBS's own controls instead of the dock's "End Live"
+button.
 
 ## Requirements
-- Streamlabs TikTok LIVE access. You can request access [here](https://tiktok.com/falcon/live_g/live_access_pc_apply/result/index.html?id=GL6399433079641606942&lang=en-US)
-- TikTok account
-- Streamlabs installed on your computer and you are logged in with your TikTok account in Streamlabs (optional)
 
-## Download
-- Download the latest release from [here](../../releases/latest)
+- Streamlabs TikTok LIVE access (request it from Streamlabs; no follower minimum required)
+- A Streamlabs API token (paste it into the dock's token field once — it's saved to the plugin's local config, not committed to the repo)
+- Qt6 (Widgets + Network)
+- OBS Studio 32+ source or dev package exporting `libobs` / `obs-frontend-api` CMake config files
 
-## Usage
-1. Run the application.
-2. click on the "Load from PC" button if you have Streamlabs installed on your computer and you are logged in with your TikTok account in Streamlabs, otherwise click on the "Login from Web" button.
-3. Select stream title and category.
-4. Click on "Save Config" button to save the token, title and category.
-5. Click on the "Go Live" button.
+## Building
 
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
+cmake --build build --config RelWithDebInfo
+```
 
-## Screenshots
+Install into your OBS plugins directory (or point `CMAKE_INSTALL_PREFIX` at
+your OBS install) and the "TikTok Live" dock will appear under
+**View > Docks** the next time OBS starts.
 
-![Screenshot](https://i.imgur.com/2PSgEQP.png)
+> If you prefer building from the official
+> [obs-plugintemplate](https://github.com/obsproject/obs-plugintemplate)
+> scaffolding (recommended for packaging/CI/signing), copy `src/` and
+> `data/` into that template and merge its build-system helpers with the
+> `CMakeLists.txt` here.
 
-## Output
+## Known limitations / next steps
 
-The app will output:
-- **Stream URL:** The URL needed to connect to the TikTok live stream.
-- **Stream key for OBS Studio (or any other streaming app):** Stream key that that you can use in OBS Studio to stream to TikTok.
-
-## Checkout my OBS-Multi-RTMP plugin fork!
-With [this](https://github.com/Loukious/obs-multi-rtmp) plugin, you can use your streamlabs token to stream directly to TikTok by saving it only once.
-
-## FAQ
-### I'm getting you `You can't open the application "***" because it may be damaged or incomplete` error on MacOS. What should I do?
-I don't own a Mac so I can't test the app on MacOS but you can try the following:
-1. Open Terminal.
-2. Run the following command: `xattr -dr com.apple.quarantine /path/to/the/StreamLabsTikTokStreamKeyGenerator.app` (replace `/path/to/the/StreamLabsTikTokStreamKeyGenerator.app` with the path to the app).
-3. Try to run the app again.
-
-### I'm getting an error when I try to stream. What should I do?
-1. First make sure it's not an issue related to Streamlabs. Try going live using Streamlabs and see if you get the same error.
-2. If it's not an issue related to Streamlabs, you can create an issue on GitHub with the error message and a screenshot of the error.
-### Do I need to have 1k followers to get Streamlabs TikTok LIVE access?
-No, you can request access even if you have less than 1k followers.
+- Token entry is manual paste-in for now — the original app's automatic
+  browser/Streamlabs-desktop token retrieval (`TokenRetriever.py`) hasn't
+  been ported to C++ yet. A good follow-up is wiring this through OBS's
+  bundled CEF browser panel (same one `obs-browser` uses) instead of adding
+  a Selenium/Chrome dependency to a compiled plugin.
+- No auto-update mechanism (`Updater.py`'s job) — OBS 32's built-in Plugin
+  Manager handles update checks once this is published there.
